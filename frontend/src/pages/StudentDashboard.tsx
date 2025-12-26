@@ -52,10 +52,30 @@ const StudentDashboard = () => {
     };
 
     const submitAttendance = async (faceDescriptor: any | null) => {
-        if (!navigator.geolocation) return alert('Geolocation required');
+        if (!navigator.geolocation) {
+            alert('❌ Geolocation is required for attendance. Please enable location services.');
+            setShowCamera(false);
+            return;
+        }
 
-        // Mock Device Fingerprint
-        const deviceFingerprint = navigator.userAgent + window.screen.width;
+        // STRONG Device Fingerprint - Multiple factors
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl');
+        const debugInfo = gl?.getExtension('WEBGL_debug_renderer_info');
+        const renderer = debugInfo ? gl?.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : '';
+
+        const deviceFingerprint = [
+            navigator.userAgent,
+            navigator.language,
+            screen.width + 'x' + screen.height,
+            screen.colorDepth,
+            new Date().getTimezoneOffset(),
+            renderer,
+            navigator.hardwareConcurrency || 0,
+            navigator.platform
+        ].join('|');
+
+        console.log('Device Fingerprint:', deviceFingerprint);
 
         navigator.geolocation.getCurrentPosition(async (position) => {
             try {
@@ -68,17 +88,22 @@ const StudentDashboard = () => {
                     isVpn: false, // Mock
                     isDevMode: false // Mock
                 });
-                alert('Attendance Marked Successfully!');
+                alert('✅ Attendance Marked Successfully!');
                 setShowCamera(false);
-                fetchCourses();
+                fetchCourses(); // Refresh to show updated status
             } catch (err: any) {
-                alert(err.response?.data?.message || 'Failed to mark attendance');
-                setShowCamera(false); // Close on error too? Maybe keep open to retry?
-                // User asked to close frame.
+                const errorMsg = err.response?.data?.message || 'Failed to mark attendance';
+                alert('❌ ' + errorMsg);
                 setShowCamera(false);
             }
-        }, () => {
-            alert('Location denied');
+        }, (error) => {
+            console.error('Geolocation error:', error);
+            alert('❌ Location access denied. Please enable location permissions and try again.');
+            setShowCamera(false);
+        }, {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
         });
     };
 
@@ -154,14 +179,20 @@ const StudentDashboard = () => {
                             </div>
 
                             <button
-                                disabled={!course.activeSession}
+                                disabled={!course.activeSession || course.activeSession?.hasMarkedAttendance}
                                 onClick={() => handleApplyAttendance(course)}
                                 className={`w-full py-2 rounded font-medium flex items-center justify-center transition
-                                    ${course.activeSession
-                                        ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-200'
-                                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+                                    ${course.activeSession?.hasMarkedAttendance
+                                        ? 'bg-green-100 text-green-700 border-2 border-green-300 cursor-not-allowed'
+                                        : course.activeSession
+                                            ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-200'
+                                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
                             >
-                                {course.activeSession ? (
+                                {course.activeSession?.hasMarkedAttendance ? (
+                                    <>
+                                        ✓ Attendance Submitted
+                                    </>
+                                ) : course.activeSession ? (
                                     <>
                                         {course.activeSession.type === 'FACE' ? <Camera size={18} className="mr-2" /> : <MapPin size={18} className="mr-2" />}
                                         Mark Attendance

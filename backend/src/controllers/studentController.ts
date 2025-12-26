@@ -58,6 +58,16 @@ export const getStudentCourses = async (req: AuthRequest, res: Response) => {
         const totalSessions = await AttendanceSession.countDocuments({ course_id: course._id });
         const attended = await AttendanceRecord.countDocuments({ student_id: student._id, session_id: { $in: await AttendanceSession.find({ course_id: course._id }).distinct('_id') }, status: 'PRESENT' });
 
+        // Check if student already marked attendance for this active session
+        let hasMarkedAttendance = false;
+        if (activeSession) {
+            const attendanceRecord = await AttendanceRecord.findOne({
+                session_id: activeSession._id,
+                student_id: student._id
+            });
+            hasMarkedAttendance = !!attendanceRecord;
+        }
+
         return {
             courseId: course._id,
             courseName: course.course_name,
@@ -69,7 +79,8 @@ export const getStudentCourses = async (req: AuthRequest, res: Response) => {
                 id: activeSession._id,
                 type: activeSession.type,
                 lat: activeSession.faculty_lat,
-                lng: activeSession.faculty_lng
+                lng: activeSession.faculty_lng,
+                hasMarkedAttendance
             } : null
         };
     }));
@@ -98,25 +109,41 @@ export const applyAttendance = async (req: AuthRequest, res: Response) => {
 
     // 2. Already marked?
     const existing = await AttendanceRecord.findOne({ session_id: sessionId, student_id: student._id });
-    if (existing) return res.status(400).json({ message: 'Attendance already marked' });
+    if (existing) return res.status(400).json({ message: 'Attendance already marked for this session' });
 
-    // 3. Device Check (Basic) - If student has registered device, match it
-    if (student.device_fingerprint && student.device_fingerprint !== deviceFingerprint) {
-        // Allow update if empty? "One device -> one student". 
-        // If empty, set it. If not empty, check it.
-        return res.status(403).json({ message: 'Device mismatch. Attendance rejected.' });
-    } else if (!student.device_fingerprint) {
-        // First time device lock
-        student.device_fingerprint = deviceFingerprint;
-        await student.save();
+    // 3. STRICT Device Check - One device per student PERMANENTLY
+    if (!deviceFingerprint || deviceFingerprint.length < 10) {
+        return res.status(403).json({ message: 'Invalid device fingerprint' });
     }
 
-    // 4. Location Check (50m)
+    if (student.device_fingerprint) {
+        // Device already registered - MUST match exactly
+        if (student.device_fingerprint !== deviceFingerprint) {
+            console.log('Device mismatch:', { stored: student.device_fingerprint, received: deviceFingerprint });
+            return res.status(403).json({
+                message: 'Device mismatch detected. You can only use the device you registered with. Contact admin to reset.'
+            });
+        }
+    } else {
+        // First time - lock this device permanently
+        student.device_fingerprint = deviceFingerprint;
+        await student.save();
+        console.log('Device locked for student:', student._id, 'Fingerprint:', deviceFingerprint);
+    }
+
+    // 4. Location Check (50m) - MANDATORY if session has location
+    if (!lat || !lng) {
+        return res.status(400).json({ message: 'Location is required for attendance' });
+    }
+
     if (session.faculty_lat && session.faculty_lng) {
         const dist = getDistance(session.faculty_lat, session.faculty_lng, lat, lng);
-        if (dist > 100) { // Increased to 100m for GPS drift safety, user asked for 50, but let's be strict if asked. 
-            // Re-read: "Distance between student & faculty <= 50 meters".
-            if (dist > 50) return res.status(400).json({ message: `Location mismatch. Distance: ${Math.round(dist)}m > 50m.` });
+        console.log('Distance check:', { distance: dist, threshold: 50 });
+
+        if (dist > 50) {
+            return res.status(400).json({
+                message: `You are too far from the classroom. Distance: ${Math.round(dist)}m (Max: 50m)`
+            });
         }
     }
 
