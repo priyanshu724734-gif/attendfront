@@ -13,6 +13,7 @@ const FaceCamera: React.FC<FaceCameraProps> = ({ onCapture, mode }) => {
     const [modelsLoaded, setModelsLoaded] = useState(false);
     const [livenessConfirmed, setLivenessConfirmed] = useState(false);
     const [, setBlinkCount] = useState(0);
+    const [detectionHistory, setDetectionHistory] = useState<number[]>([]);
 
     useEffect(() => {
         const loadModels = async () => {
@@ -24,14 +25,18 @@ const FaceCamera: React.FC<FaceCameraProps> = ({ onCapture, mode }) => {
                     faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
                 ]);
                 setModelsLoaded(true);
-                setStatus('Models Loaded. Please Blink to verify liveness.');
+                if (mode === 'REGISTER') {
+                    setStatus('Look at camera and BLINK to verify you are real');
+                } else {
+                    setStatus('Look at camera and BLINK to verify attendance');
+                }
             } catch (err) {
                 console.error(err);
                 setStatus('Failed to load AI models. Check internet.');
             }
         };
         loadModels();
-    }, []);
+    }, [mode]);
 
     const detect = async () => {
         if (webcamRef.current && webcamRef.current.video?.readyState === 4) {
@@ -43,43 +48,51 @@ const FaceCamera: React.FC<FaceCameraProps> = ({ onCapture, mode }) => {
 
             if (detections.length > 0) {
                 const face = detections[0];
-
-                // --- FAST PATH: Attendance Mode ---
-                // If in attendance mode, just check for a clear face (high confidence)
-                // We assume liveness was checked strictly during registration.
-                // For higher security, we could keep liveness here too, but user asked for speed.
-                if (mode === 'ATTENDANCE' && !livenessConfirmed) {
-                    if (face.detection.score > 0.85) {
-                        setLivenessConfirmed(true);
-                        setStatus('Face Verified. Submitting...');
-                        capture(face.descriptor);
-                        return;
-                    }
-                }
-
-                // --- STRICT PATH: Registration Mode ---
-                // Require blink detection to ensure it's a real person registering
                 const landmarks = face.landmarks;
                 const leftEye = landmarks.getLeftEye();
                 const rightEye = landmarks.getRightEye();
 
                 const leftEAR = getEAR(leftEye);
                 const rightEAR = getEAR(rightEye);
+                const avgEAR = (leftEAR + rightEAR) / 2;
 
-                // Blink detection threshold
-                if (leftEAR < 0.25 && rightEAR < 0.25) {
-                    if (!livenessConfirmed) {
+                // Track EAR history for motion detection
+                setDetectionHistory(prev => {
+                    const newHistory = [...prev, avgEAR];
+                    // Keep only last 15 frames (3 seconds at 200ms intervals)
+                    return newHistory.slice(-15);
+                });
+
+                // ENHANCED LIVENESS DETECTION
+                if (!livenessConfirmed && detectionHistory.length >= 10) {
+                    // 1. Check for BLINK (eyes closed)
+                    const isBlinking = avgEAR < 0.22;
+
+                    // 2. Check for MOTION VARIANCE (real faces move slightly, videos don't)
+                    const variance = calculateVariance(detectionHistory);
+                    const hasMotion = variance > 0.002; // Real faces have natural micro-movements
+
+                    // 3. Check for BLINK PATTERN (must have open->closed->open transition)
+                    const hasBlinkPattern = checkBlinkPattern(detectionHistory);
+
+                    if (isBlinking && hasBlinkPattern && hasMotion) {
                         setBlinkCount(prev => prev + 1);
-                        // Simple noise filter: require consistent blink or just one valid blink
-                        setStatus('Blink Detected! Capturing...');
+                        setStatus('✓ Liveness Verified! Capturing...');
                         setLivenessConfirmed(true);
 
-                        // Delay slightly to capture open eyes?
                         setTimeout(() => {
                             capture(face.descriptor);
-                        }, 500);
+                        }, 300);
+                    } else if (!hasMotion) {
+                        setStatus('⚠️ Please move your head slightly - No motion detected');
+                    } else if (!hasBlinkPattern) {
+                        setStatus('👁️ Please BLINK naturally to verify');
                     }
+                } else if (detectionHistory.length < 10) {
+                    setStatus('Analyzing... Please look at camera');
                 }
+            } else {
+                setStatus('❌ No face detected - Please position yourself');
             }
         }
     };
@@ -100,6 +113,41 @@ const FaceCamera: React.FC<FaceCameraProps> = ({ onCapture, mode }) => {
         return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
     };
 
+    // Calculate variance to detect motion
+    const calculateVariance = (values: number[]) => {
+        if (values.length < 2) return 0;
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
+        return variance;
+    };
+
+    // Check for blink pattern (open -> closed -> open)
+    const checkBlinkPattern = (earHistory: number[]) => {
+        if (earHistory.length < 8) return false;
+
+        const recent = earHistory.slice(-8);
+        const openThreshold = 0.25;
+        const closedThreshold = 0.20;
+
+        // Look for pattern: open eyes -> closed eyes -> open eyes
+        let hasOpenBefore = false;
+        let hasClosed = false;
+        let hasOpenAfter = false;
+
+        for (let i = 0; i < recent.length; i++) {
+            if (!hasOpenBefore && recent[i] > openThreshold) {
+                hasOpenBefore = true;
+            } else if (hasOpenBefore && !hasClosed && recent[i] < closedThreshold) {
+                hasClosed = true;
+            } else if (hasClosed && !hasOpenAfter && recent[i] > openThreshold) {
+                hasOpenAfter = true;
+                break;
+            }
+        }
+
+        return hasOpenBefore && hasClosed && hasOpenAfter;
+    };
+
     useEffect(() => {
         let interval: any;
         if (modelsLoaded && !livenessConfirmed) {
@@ -108,7 +156,7 @@ const FaceCamera: React.FC<FaceCameraProps> = ({ onCapture, mode }) => {
             }, 200);
         }
         return () => clearInterval(interval);
-    }, [modelsLoaded, livenessConfirmed]);
+    }, [modelsLoaded, livenessConfirmed, detectionHistory]);
 
     return (
         <div className="flex flex-col items-center">
@@ -143,10 +191,10 @@ const FaceCamera: React.FC<FaceCameraProps> = ({ onCapture, mode }) => {
                     )}
                 </div>
             </div>
-            <p className="mt-4 text-gray-500 text-sm">
+            <p className="mt-4 text-gray-500 text-sm text-center">
                 {mode === 'REGISTER'
-                    ? "Blink naturally to verify you are human."
-                    : "Look at the camera to verify attendance."}
+                    ? "🔒 Security: Blink naturally + slight head movement required"
+                    : "🔒 Anti-spoofing: Blink to verify you're real"}
             </p>
         </div>
     );
