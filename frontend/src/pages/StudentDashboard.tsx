@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, CheckCircle, XCircle, Camera, MapPin } from 'lucide-react';
+import { LogOut, Camera, MapPin } from 'lucide-react';
 import FaceCamera from '../components/FaceCamera';
 
 const StudentDashboard = () => {
     const { user, logout } = useAuth();
     const [courses, setCourses] = useState<any[]>([]);
-    const [loading, setLoading] = useState(false);
     const [showCamera, setShowCamera] = useState(false);
     const [cameraMode, setCameraMode] = useState<'REGISTER' | 'ATTENDANCE'>('REGISTER');
-    const [activeCourseId, setActiveCourseId] = useState<string | null>(null);
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
     const [hasFaceData, setHasFaceData] = useState(false);
@@ -42,7 +40,6 @@ const StudentDashboard = () => {
     const handleApplyAttendance = (course: any) => {
         if (!course.activeSession) return;
 
-        setActiveCourseId(course.courseId);
         setActiveSessionId(course.activeSession.id);
 
         if (course.activeSession.type === 'FACE') {
@@ -80,7 +77,7 @@ const StudentDashboard = () => {
                 // User asked to close frame.
                 setShowCamera(false);
             }
-        }, (err) => {
+        }, () => {
             alert('Location denied');
         });
     };
@@ -94,7 +91,7 @@ const StudentDashboard = () => {
                 alert('Face Registered Successfully');
                 setShowCamera(false);
                 fetchCourses(); // Update hasFaceData
-            } catch (err: any) {
+            } catch {
                 alert('Failed to register face');
             }
         } else {

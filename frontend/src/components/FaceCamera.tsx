@@ -12,7 +12,7 @@ const FaceCamera: React.FC<FaceCameraProps> = ({ onCapture, mode }) => {
     const [status, setStatus] = useState('Loading AI Models...');
     const [modelsLoaded, setModelsLoaded] = useState(false);
     const [livenessConfirmed, setLivenessConfirmed] = useState(false);
-    const [blinkCount, setBlinkCount] = useState(0);
+    const [, setBlinkCount] = useState(0);
 
     useEffect(() => {
         const loadModels = async () => {

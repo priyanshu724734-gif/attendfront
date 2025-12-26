@@ -7,7 +7,6 @@ const FacultyDashboard = () => {
     const { user, logout } = useAuth();
     const [courses, setCourses] = useState<any[]>([]);
     const [stats, setStats] = useState<any>(null); // For selected course
-    const [loading, setLoading] = useState(false);
     const [viewingStatsId, setViewingStatsId] = useState<string | null>(null);
 
     const fetchCourses = async () => {
