@@ -111,24 +111,24 @@ export const applyAttendance = async (req: AuthRequest, res: Response) => {
     const existing = await AttendanceRecord.findOne({ session_id: sessionId, student_id: student._id });
     if (existing) return res.status(400).json({ message: 'Attendance already marked for this session' });
 
-    // 3. STRICT Device Check - One device per student PERMANENTLY
+    // 3. Device Check - Prevent multiple students using SAME device for SAME session
     if (!deviceFingerprint || deviceFingerprint.length < 10) {
         return res.status(403).json({ message: 'Invalid device fingerprint' });
     }
 
-    if (student.device_fingerprint) {
-        // Device already registered - MUST match exactly
-        if (student.device_fingerprint !== deviceFingerprint) {
-            console.log('Device mismatch:', { stored: student.device_fingerprint, received: deviceFingerprint });
+    // Check if THIS device was already used for THIS session by ANY other student
+    const deviceUsedInSession = await AttendanceRecord.findOne({
+        session_id: sessionId,
+        device_fingerprint: deviceFingerprint
+    });
+
+    if (deviceUsedInSession) {
+        // Check if it's the same student (shouldn't happen due to check above, but safety)
+        if (deviceUsedInSession.student_id.toString() !== student._id.toString()) {
             return res.status(403).json({
-                message: 'Device mismatch detected. You can only use the device you registered with. Contact admin to reset.'
+                message: 'This device has already been used by another student for this session. Please use a different device.'
             });
         }
-    } else {
-        // First time - lock this device permanently
-        student.device_fingerprint = deviceFingerprint;
-        await student.save();
-        console.log('Device locked for student:', student._id, 'Fingerprint:', deviceFingerprint);
     }
 
     // 4. Location Check (50m) - MANDATORY if session has location
